@@ -1,0 +1,6 @@
+.DS_Store
+*.vcd
+*.vvp
+*.log
+alu_sim
+tmp/
