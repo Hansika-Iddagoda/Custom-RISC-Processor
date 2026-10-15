@@ -12,6 +12,15 @@ module reg_file (
 
     reg [7:0] registers [7:0];  // 8 registers, each 8 bits wide, forming the register file
     integer i;                  // Loop variable
+    wire [7:0] R0 = registers[0];
+    wire [7:0] R1 = registers[1];
+    wire [7:0] R2 = registers[2];
+    wire [7:0] R3 = registers[3];
+    wire [7:0] R4 = registers[4];
+    wire [7:0] R5 = registers[5];
+    wire [7:0] R6 = registers[6];
+    wire [7:0] R7 = registers[7];
+
 
     always @(*) begin
         #2; 
