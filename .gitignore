@@ -4,3 +4,4 @@
 *.log
 alu_sim
 tmp/
+sim
