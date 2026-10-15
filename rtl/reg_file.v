@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 module reg_file (
     input [7:0] IN,             // 8-bit data input for writing to the register file
     output reg [7:0] OUT1,      // 8-bit data output from the first read port

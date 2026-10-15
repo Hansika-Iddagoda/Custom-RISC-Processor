@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 module forward_unit (
     input [7:0] DATA2,      //declare DATA2 as 8-bit input
     output reg [7:0] RESULT //declare RESULT as 8-bit register
