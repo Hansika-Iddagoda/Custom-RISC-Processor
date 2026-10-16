@@ -3,7 +3,9 @@ module control_unit(
     output reg [2:0] ALUOP,     // Tells the ALU what operation to perform
     output reg SEL_2S_COMP,     // Selects if we need to invert the second register (for subtraction)
     output reg SEL_IMM,         // Selects if we are using an immediate (constant) value
-    output reg EN_WR            // Enables writing the result back to a register
+    output reg EN_WR,           // Enables writing the result back to a register
+    output reg JUMP,            // Jump signal
+    output reg BRANCH           // Branch signal
 );
     always @(*) begin
         #1 // delay
@@ -14,6 +16,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b1;   // Use the immediate value
                 EN_WR = 1'b1;     // Allow writing to register
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
 
             8'b00000001: begin    // mov
@@ -21,6 +25,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b0;   // Use register value, not immediate
                 EN_WR = 1'b1;     // Allow writing to register
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
 
             8'b00000010: begin    // add
@@ -28,6 +34,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b0;
                 EN_WR = 1'b1;     // Save the result
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
 
             8'b00000011: begin    // sub: Subtract second register from first register
@@ -35,6 +43,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b1; // Turn the second register value negative (2's complement)
                 SEL_IMM = 1'b0;
                 EN_WR = 1'b1;     // Save the result
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
 
             8'b00000100: begin    // and
@@ -42,6 +52,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b0;
                 EN_WR = 1'b1;     // Save the result
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
 
             8'b00000101: begin    // or
@@ -49,6 +61,26 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b0;
                 EN_WR = 1'b1;     // Save the result
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
+            end
+
+            8'b00000110: begin    // jump
+                ALUOP = 3'b000;   // ALU code for j
+                SEL_2S_COMP = 1'b0;
+                SEL_IMM = 1'b0;
+                EN_WR = 1'b0;     
+                JUMP = 1'b1;      //enable jump
+                BRANCH = 1'b0;
+            end
+
+            8'b00000111: begin    // beq
+                ALUOP = 3'b001;   // ALU code for beq
+                SEL_2S_COMP = 1'b1;//to subtract
+                SEL_IMM = 1'b0;
+                EN_WR = 1'b0;     
+                JUMP = 1'b0;
+                BRANCH = 1'b1;    //enable branching
             end
 
             default: begin        // Default case: Run this if OPCODE doesn't match any above
@@ -56,6 +88,8 @@ module control_unit(
                 SEL_2S_COMP = 1'b0;
                 SEL_IMM = 1'b0;
                 EN_WR = 1'b0;     // Do not write anything to registers (safe mode)
+                JUMP = 1'b0;
+                BRANCH = 1'b0;
             end
         endcase
     end
@@ -73,21 +107,29 @@ module _2s_complement(
         // Flip all the bits (~) and add 1 to make it negative
         RESULT_2S = ~REGOUT2 + 1;
     end
-
 endmodule
 
+module sign_extension (
+    input  wire [7:0]  IN,  // 8-bit signed input
+    output wire [31:0] OUT // 32-bit signed output
+);
+
+    assign OUT = { {24{IN[7]}}, IN };   //use the 7th index of the 8bit input to fill the 32bit output
+endmodule
 
 // Instruction Fetch / Decoder Module: Breaks a 32-bit instruction into smaller useful pieces
 module insFetch (
     input [31:0] INS,           // The full 32-bit instruction
     output reg [7:0] OP,        // Bits 31 to 24: The operation code
     output reg [2:0] WRITEREG,  // Bits 18 to 16: The destination register address
+    output reg [7:0] OFFSET,  // Bits 23 to 16: immediate value (jump or branch target offset)
     output reg [2:0] READREG1,  // Bits 10 to 8: First source register address
     output reg [2:0] READREG2,  // Bits 2 to 0: Second source register address
     output reg [7:0] IMM        // Bits 7 to 0: Immediate constant value
 );
     always @(*) begin
         OP = INS[31:24];
+        OFFSET = INS[23:16];
         WRITEREG = INS[18:16];
         READREG1 = INS[10:8];
         READREG2 = INS[2:0];
@@ -100,8 +142,13 @@ endmodule
 module pc (
     input RESET,                // Reset signal to start over
     input CLK,                  // Clock signal to time the steps
+    input ENABLE,               // ENABLE signal to jump/branch
+    input [31:0] EXTD_OFFSET,   // 32-bit extended offset
     output reg [31:0] PC        // The current instruction address output
 );
+    reg [31:0] target;
+    reg [31:0] next;
+
     // Runs every time the clock signal goes from 0 to 1 (rising edge)
     always @(posedge CLK) begin
         #1 // delay
@@ -110,7 +157,10 @@ module pc (
             PC <= 32'h00000000; // Go back to the very beginning (address 0)
         end 
         else begin
-            PC <= PC + 32'h4;   // Move forward by 4 bytes to get the next instruction
+            if (ENABLE == 1'b1)
+                PC <= (EXTD_OFFSET << 2) + PC; //multiply by 4 because we are using word size and also add to the pc
+            else
+                PC <= PC + 32'h4; //next instruction as usual
         end
     end
 
@@ -141,10 +191,19 @@ module cpu(
     wire [7:0] mux2_out;        // Output of MUX 2 (chooses register data or immediate value)
     wire [7:0] alu_result;      // Final calculation result from the ALU
 
+    wire [7:0] offset;
+    wire [31:0] extd_offset;
+    wire jump;
+    wire branch;
+    wire zero;
+    wire enable_jump;
+
     // Connect the Program Counter module
     pc _pc(
         .RESET(RESET),
         .CLK(CLK),
+        .ENABLE(enable_jump),
+        .EXTD_OFFSET(extd_offset),
         .PC(PC)
     );
 
@@ -153,6 +212,7 @@ module cpu(
         .INS(INSTRUCTION),
         .OP(opcode),
         .WRITEREG(write_reg),
+        .OFFSET(offset),
         .READREG1(read_reg1),
         .READREG2(read_reg2),
         .IMM(imm)
@@ -164,7 +224,9 @@ module cpu(
         .ALUOP(aluop),
         .SEL_2S_COMP(sel_2s_comp),
         .SEL_IMM(sel_imm),
-        .EN_WR(en_write)
+        .EN_WR(en_write),
+        .JUMP(jump),
+        .BRANCH(branch)
     );
 
     // Connect the Register File module (where variable data is stored)
@@ -180,6 +242,11 @@ module cpu(
         .RESET(RESET)
     );
 
+    sign_extension _sign_extension(
+        .IN(offset),
+        .OUT(extd_offset)
+    );
+
     // Connect the 2's Complement (negation) module
     _2s_complement __2s_complement(
         .REGOUT2(regout2),
@@ -191,7 +258,8 @@ module cpu(
         .DATA1(regout1),
         .DATA2(mux2_out),
         .RESULT(alu_result),
-        .SELECT(aluop)
+        .SELECT(aluop),
+        .ZERO(zero)
     );
 
     // Multiplexer 1: If sel_2s_comp is 1, pick the negative number. Otherwise, pick normal register 2 data.
@@ -199,5 +267,7 @@ module cpu(
     
     // Multiplexer 2: If sel_imm is 1, pick the constant immediate value. Otherwise, pick the result from MUX 1.
     assign mux2_out = (sel_imm == 1'b1) ? imm : mux1_out;
+
+    assign enable_jump = (branch && zero) || jump;  //Branch if ZERO of alu is high and branch enabled from the control unit. Jump if just jump enabled.
 
 endmodule
